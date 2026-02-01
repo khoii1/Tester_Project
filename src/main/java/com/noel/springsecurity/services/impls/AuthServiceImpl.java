@@ -1,5 +1,21 @@
 package com.noel.springsecurity.services.impls;
 
+import java.security.SecureRandom;
+import java.time.LocalDateTime;
+import java.util.UUID;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.DisabledException;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
 import com.noel.springsecurity.dto.request.LoginRequest;
 import com.noel.springsecurity.dto.request.RegisterRequest;
 import com.noel.springsecurity.entities.EmailVerification;
@@ -17,25 +33,12 @@ import com.noel.springsecurity.repositories.IEmailVerificationRepository;
 import com.noel.springsecurity.repositories.IUserRepository;
 import com.noel.springsecurity.security.UserPrincipal;
 import com.noel.springsecurity.security.jwt.JwtService;
+import com.noel.springsecurity.services.AntiBruteForceService;
 import com.noel.springsecurity.services.IAuthService;
 import com.noel.springsecurity.services.IRefreshTokenService;
 import com.noel.springsecurity.utils.TokenHashUtil;
-import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.authentication.BadCredentialsException;
-import org.springframework.security.authentication.DisabledException;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
-import java.security.SecureRandom;
-import java.time.LocalDateTime;
-import java.util.UUID;
+import lombok.RequiredArgsConstructor;
 
 @Service
 @RequiredArgsConstructor
@@ -48,6 +51,7 @@ public class AuthServiceImpl implements IAuthService {
     private final AuthenticationManager authenticationManager;
     private final ApplicationEventPublisher eventPublisher;
     private final IUserMapper userMapper;
+    private final AntiBruteForceService antiBruteForceService;
     @Value("${app.security.email.reset-password-expiration}")
     private int resetPasswordExpirationMinutes;
     @Value("${app.security.email.reset-password-url}")
@@ -57,8 +61,11 @@ public class AuthServiceImpl implements IAuthService {
     @Override
     @Transactional
     public void sendRegistrationOtp(String email) {
+        // Check if account is locked for OTP sending
+        antiBruteForceService.checkIfLocked(email, "send-otp");
+
         if (userRepository.existsByEmail(email)) {
-            throw new UserAlreadyExistsException("Email already in use. Please login.");
+            throw new UserAlreadyExistsException("Email này đã được đăng ký. Vui lòng đăng nhập.");
         }
         // Generate Secure OTP
         String otp = String.format("%06d", new SecureRandom().nextInt(999999));
@@ -78,16 +85,30 @@ public class AuthServiceImpl implements IAuthService {
     @Override
     @Transactional
     public String verifyOtp(String email, String otp) {
+        // Check if account is locked for OTP verification
+        antiBruteForceService.checkIfLocked(email, "verify-otp");
+
         EmailVerification verification = emailVerificationRepository.findByEmail(email)
-                .orElseThrow(() -> new ResourceNotFoundException("Invalid email or OTP not found"));
-        if (verification.getExpiryDate().isBefore(LocalDateTime.now())) {
-            throw new LinkExpiredException("OTP has expired. Please request a new one.");
+                .orElse(null);
+        
+        // Record failed attempt even when OTP not found (anti-brute force protection)
+        if (verification == null || verification.getExpiryDate().isBefore(LocalDateTime.now()) 
+                || !verification.getOtpCode().equals(otp)) {
+            antiBruteForceService.recordFailedAttempt(email, "verify-otp");
+            
+            if (verification == null) {
+                throw new ResourceNotFoundException("Email không hợp lệ hoặc chưa gửi mã OTP.");
+            }
+            if (verification.getExpiryDate().isBefore(LocalDateTime.now())) {
+                throw new LinkExpiredException("Mã OTP đã hết hạn. Vui lòng yêu cầu mã mới.");
+            }
+            throw new BadCredentialsException("Mã OTP không chính xác. Vui lòng kiểm tra lại.");
         }
-        if (!verification.getOtpCode().equals(otp)) {
-            throw new BadCredentialsException("Invalid OTP code.");
-        }
+        
         // Cleanup (One-time use)
         emailVerificationRepository.delete(verification);
+        // Reset attempts on success
+        antiBruteForceService.resetAttempts(email, "verify-otp");
         // Issue "Pre-Auth" Token
         return jwtService.generateRegistrationToken(email);
     }
@@ -97,11 +118,11 @@ public class AuthServiceImpl implements IAuthService {
     @Transactional
     public AuthResult register(RegisterRequest request, String preAuthToken) {
         if (jwtService.isTokenExpired(preAuthToken) || !jwtService.isRegistrationToken(preAuthToken)) {
-            throw new BadCredentialsException("Invalid or expired registration session.");
+            throw new BadCredentialsException("Phiên đăng ký không hợp lệ hoặc đã hết hạn. Vui lòng thử lại.");
         }
         String email = jwtService.extractUserSubject(preAuthToken);
         if (userRepository.existsByEmail(email)) {
-            throw new UserAlreadyExistsException("Email already in use.");
+            throw new UserAlreadyExistsException("Email này đã được sử dụng.");
         }
         // Create User
         User user = new User();
@@ -123,18 +144,25 @@ public class AuthServiceImpl implements IAuthService {
     @Override
     @Transactional
     public AuthResult login(LoginRequest request) {
+        // Check if account is locked for login
+        antiBruteForceService.checkIfLocked(request.email(), "login");
+
         Authentication authentication;
         try {
             authentication = authenticationManager.authenticate(
                     new UsernamePasswordAuthenticationToken(request.email(), request.password())
             );
         } catch (BadCredentialsException e) {
-            throw new BadCredentialsException("Invalid email or password");
+            // Record failed attempt
+            antiBruteForceService.recordFailedAttempt(request.email(), "login");
+            throw new BadCredentialsException("Email hoặc mật khẩu không chính xác. Vui lòng thử lại.");
         } catch (DisabledException e) {
-            throw new DisabledException("Account is disabled.");
+            throw new DisabledException("Tài khoản của bạn đã bị vô hiệu hóa. Vui lòng liên hệ quản trị viên.");
         }
         UserPrincipal principal = (UserPrincipal) authentication.getPrincipal();
         User user = principal.getUser();
+        // Reset attempts on successful login
+        antiBruteForceService.resetAttempts(request.email(), "login");
         String accessToken = jwtService.generateAccessToken(user);
         String refreshToken = refreshTokenService.createRefreshToken(user);
 
@@ -146,11 +174,11 @@ public class AuthServiceImpl implements IAuthService {
     @Transactional
     public AuthResult refreshToken(String incomingRefreshToken) {
         RefreshToken existingToken = refreshTokenService.findByToken(incomingRefreshToken)
-                .orElseThrow(() -> new TokenRefreshException("Invalid refresh token"));
+                .orElseThrow(() -> new TokenRefreshException("Phiên đăng nhập không hợp lệ. Vui lòng đăng nhập lại."));
         refreshTokenService.verifyExpiration(existingToken);
         User user = existingToken.getUser();
         if (!user.isEnabled()) {
-            throw new TokenRefreshException("User account is disabled");
+            throw new TokenRefreshException("Tài khoản của bạn đã bị vô hiệu hóa.");
         }
         // Rotate Token - delete old, create new
         refreshTokenService.delete(existingToken);
@@ -173,20 +201,28 @@ public class AuthServiceImpl implements IAuthService {
     @Override
     @Transactional
     public void requestPasswordReset(String email) {
-        userRepository.findByEmail(email).ifPresent(user -> {
-            String rawToken = UUID.randomUUID().toString();
-            String hashedToken = TokenHashUtil.hashToken(rawToken);
-            user.setPasswordResetToken(hashedToken);
-            user.setPasswordResetTokenExpiry(
-                    LocalDateTime.now().plusMinutes(resetPasswordExpirationMinutes)
-            );
-            userRepository.save(user);
+        // Check if account is locked for password reset
+        antiBruteForceService.checkIfLocked(email, "reset-password");
 
-            String fullName = user.getFirstName() + " " + user.getLastName();
-            String link = passwordResetLink + "?token=" + rawToken;
-            // Publish Async Event
-            eventPublisher.publishEvent(new PasswordResetEvent(user.getEmail(), fullName, link));
-        });
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> {
+                    // Record failed attempt when email not found
+                    antiBruteForceService.recordFailedAttempt(email, "reset-password");
+                    return new ResourceNotFoundException("Email không tồn tại trong hệ thống. Vui lòng kiểm tra lại.");
+                });
+
+        String rawToken = UUID.randomUUID().toString();
+        String hashedToken = TokenHashUtil.hashToken(rawToken);
+        user.setPasswordResetToken(hashedToken);
+        user.setPasswordResetTokenExpiry(
+                LocalDateTime.now().plusMinutes(resetPasswordExpirationMinutes)
+        );
+        userRepository.save(user);
+
+        String fullName = user.getFirstName() + " " + user.getLastName();
+        String link = passwordResetLink + "?token=" + rawToken;
+        // Publish Async Event
+        eventPublisher.publishEvent(new PasswordResetEvent(user.getEmail(), fullName, link));
     }
 
     // RESET PASSWORD
@@ -195,14 +231,31 @@ public class AuthServiceImpl implements IAuthService {
     public void resetPassword(String token, String newPassword) {
         String hashedToken = TokenHashUtil.hashToken(token);
         User user = userRepository.findByPasswordResetToken(hashedToken)
-                .orElseThrow(() -> new ResourceNotFoundException("Invalid or expired password reset token"));
-        if (user.getPasswordResetTokenExpiry().isBefore(LocalDateTime.now())) {
-            throw new LinkExpiredException("Password reset link has expired");
+                .orElse(null);
+        
+        // For reset-password, track globally per action to prevent brute force
+        // This prevents attackers from trying multiple different tokens
+        String trackingKey = "reset-password-global";
+        
+        // Check if locked
+        antiBruteForceService.checkIfLocked(trackingKey, "reset-password");
+        
+        // Record failed attempt even when token invalid (anti-brute force protection)
+        if (user == null || user.getPasswordResetTokenExpiry().isBefore(LocalDateTime.now())) {
+            antiBruteForceService.recordFailedAttempt(trackingKey, "reset-password");
+            
+            if (user == null) {
+                throw new ResourceNotFoundException("Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.");
+            }
+            throw new LinkExpiredException("Liên kết đặt lại mật khẩu đã hết hạn. Vui lòng yêu cầu liên kết mới.");
         }
+        
         user.setPassword(passwordEncoder.encode(newPassword));
         user.setPasswordResetToken(null);
         user.setPasswordResetTokenExpiry(null);
         userRepository.save(user);
+        // Reset attempts on successful password reset
+        antiBruteForceService.resetAttempts(trackingKey, "reset-password");
         // Security: Revoke all sessions to force re-login with a new password
         refreshTokenService.deleteByUser(user);
     }

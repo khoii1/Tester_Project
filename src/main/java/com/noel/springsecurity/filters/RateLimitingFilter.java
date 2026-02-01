@@ -16,9 +16,11 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class RateLimitingFilter extends OncePerRequestFilter {
 
     private final RateLimitingService rateLimitingService;
@@ -36,18 +38,22 @@ public class RateLimitingFilter extends OncePerRequestFilter {
             // Identify the Client (IP Address + Endpoint)
             String clientIp = getClientIp(request);
             String endpoint = request.getRequestURI();
-            String bucketKey = clientIp + ":" + endpoint; // Tách bucket riêng cho từng endpoint
+            String bucketKey = clientIp + ":" + endpoint;
+            
+            log.debug("Rate limiting check - IP: {}, Endpoint: {}", clientIp, endpoint);
             
             // Get their bucket
             Bucket bucket = rateLimitingService.resolveBucket(bucketKey);
             // Try to consume 1 token
             if (bucket.tryConsume(1)) {
                 // Success: Proceed
+                log.debug("Rate limit OK - Tokens remaining: {}", bucket.getAvailableTokens());
                 filterChain.doFilter(request, response);
             } else {
                 // Failure: Throw Exception (caught by GlobalExceptionHandler)
+                log.warn("Rate limit exceeded - IP: {}, Endpoint: {}", clientIp, endpoint);
                 handlerExceptionResolver.resolveException(request, response, null,
-                        new RateLimitExceededException("Too many requests. Please try again later."));
+                        new RateLimitExceededException("Qua nhieu yeu cau. Vui long thu lai sau."));
             }
         } else {
             // Not an auth route? Just continue.

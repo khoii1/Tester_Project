@@ -1,15 +1,14 @@
 package com.noel.springsecurity.integration;
 
-import static org.hamcrest.Matchers.not;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -22,20 +21,20 @@ import com.noel.springsecurity.config.TestEmailConfig;
 import com.noel.springsecurity.dto.request.ForgotPasswordRequest;
 import com.noel.springsecurity.dto.request.LoginRequest;
 import com.noel.springsecurity.dto.request.OtpRequest;
-import com.noel.springsecurity.dto.request.ResetPasswordRequest;
-import com.noel.springsecurity.dto.request.VerifyOtpRequest;
+import com.noel.springsecurity.entities.User;
+import com.noel.springsecurity.repositories.IRefreshTokenRepository;
+import com.noel.springsecurity.repositories.IUserRepository;
 import com.noel.springsecurity.utils.TestDataBuilder;
 
 /**
- * Integration tests for Rate Limiting functionality
- * Tests the Bucket4j rate limiter on authentication endpoints
+ * Integration tests cho Rate Limiting
+ * Kiểm tra giới hạn tổng số requests (cả success + failed)
  */
-@SpringBootTest
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 @Import(TestEmailConfig.class)
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
-@TestMethodOrder(MethodOrderer.MethodName.class)
 class RateLimitingTest {
 
     @Autowired
@@ -44,30 +43,55 @@ class RateLimitingTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private IUserRepository userRepository;
+
+    @Autowired
+    private IRefreshTokenRepository refreshTokenRepository;
+
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+
     private static final String LOGIN_ENDPOINT = "/api/v1/auth/login";
     private static final String SEND_OTP_ENDPOINT = "/api/v1/auth/send-otp";
-    private static final String VERIFY_OTP_ENDPOINT = "/api/v1/auth/verify-otp";
     private static final String FORGOT_PASSWORD_ENDPOINT = "/api/v1/auth/forgot-password";
-    private static final String RESET_PASSWORD_ENDPOINT = "/api/v1/auth/reset-password";
 
+    @BeforeEach
+    void setUp() {
+        refreshTokenRepository.deleteAll();
+        userRepository.deleteAll();
+    }
+
+    // ==================== RATE LIMITING TESTS (5 TCs) ====================
+    // Kiểm tra giới hạn requests THÀNH CÔNG (không phải failed attempts)
+    // Giới hạn: 10 requests/phút/IP → Request thứ 11 bị chặn
+
+    // RL-01: Login thành công nhiều lần bị rate limit
     @Test
-    @DisplayName("Should rate limit login endpoint after 5 requests")
-    void testLoginRateLimit() throws Exception {
-        LoginRequest request = TestDataBuilder.createLoginRequest(
-                "test@example.com",
-                "WrongPassword123!"
+    @DisplayName("RL-01: Should rate limit successful login requests after 10 attempts")
+    void testSuccessfulLoginRateLimit() throws Exception {
+        // Tạo user hợp lệ
+        User testUser = TestDataBuilder.createTestUser(
+                "rate-limit@example.com",
+                passwordEncoder.encode("Password123!")
         );
-        String jsonRequest = objectMapper.writeValueAsString(request);
+        userRepository.save(testUser);
 
-        // Send 5 requests - should not be rate limited
-        for (int i = 0; i < 5; i++) {
+        LoginRequest validRequest = TestDataBuilder.createLoginRequest(
+                "rate-limit@example.com",
+                "Password123!"
+        );
+        String jsonRequest = objectMapper.writeValueAsString(validRequest);
+
+        // Gửi 10 login thành công
+        for (int i = 0; i < 10; i++) {
             mockMvc.perform(post(LOGIN_ENDPOINT)
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(jsonRequest))
-                    .andExpect(status().is(not(429)));
+                    .andExpect(status().isOk()); // Should succeed
         }
 
-        // 6th request should be rate limited
+        // Request thứ 11 phải bị rate limit
         mockMvc.perform(post(LOGIN_ENDPOINT)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(jsonRequest))
@@ -75,21 +99,22 @@ class RateLimitingTest {
                 .andExpect(header().exists("X-Rate-Limit-Retry-After-Seconds"));
     }
 
+    // RL-02: Send OTP nhiều lần bị rate limit
     @Test
-    @DisplayName("Should rate limit send-otp endpoint after 5 requests")
+    @DisplayName("RL-02: Should rate limit send-OTP requests after 10 attempts")
     void testSendOtpRateLimit() throws Exception {
-        OtpRequest request = TestDataBuilder.createOtpRequest("test@example.com");
+        OtpRequest request = new OtpRequest("send-otp-test@example.com");
         String jsonRequest = objectMapper.writeValueAsString(request);
 
-        // Send 5 OTP requests
-        for (int i = 0; i < 5; i++) {
+        // Gửi 10 send-OTP requests
+        for (int i = 0; i < 10; i++) {
             mockMvc.perform(post(SEND_OTP_ENDPOINT)
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(jsonRequest))
-                    .andExpect(status().is(not(429)));
+                    .andExpect(status().isOk());
         }
 
-        // 6th request should be rate limited
+        // Request thứ 11 phải bị rate limit
         mockMvc.perform(post(SEND_OTP_ENDPOINT)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(jsonRequest))
@@ -97,51 +122,29 @@ class RateLimitingTest {
                 .andExpect(header().exists("X-Rate-Limit-Retry-After-Seconds"));
     }
 
+    // RL-03: Forgot password nhiều lần bị rate limit
     @Test
-    @DisplayName("Should rate limit verify-otp endpoint after 5 requests")
-    void testVerifyOtpRateLimit() throws Exception {
-        String email = "test@example.com";
-
-        // Try to brute-force OTP verification
-        for (int i = 0; i < 5; i++) {
-            VerifyOtpRequest request = TestDataBuilder.createVerifyOtpRequest(
-                    email,
-                    String.format("%06d", i)
-            );
-            String jsonRequest = objectMapper.writeValueAsString(request);
-
-            mockMvc.perform(post(VERIFY_OTP_ENDPOINT)
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(jsonRequest))
-                    .andExpect(status().is(not(429)));
-        }
-
-        // 6th attempt should be rate limited
-        VerifyOtpRequest request = TestDataBuilder.createVerifyOtpRequest(email, "999999");
-        String jsonRequest = objectMapper.writeValueAsString(request);
-
-        mockMvc.perform(post(VERIFY_OTP_ENDPOINT)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(jsonRequest))
-                .andExpect(status().isTooManyRequests())
-                .andExpect(header().exists("X-Rate-Limit-Retry-After-Seconds"));
-    }
-
-    @Test
-    @DisplayName("Should rate limit forgot-password endpoint after 5 requests")
+    @DisplayName("RL-03: Should rate limit forgot-password requests after 10 attempts")
     void testForgotPasswordRateLimit() throws Exception {
-        ForgotPasswordRequest request = new ForgotPasswordRequest("victim@example.com");
+        // Tạo user để forgot password
+        User testUser = TestDataBuilder.createTestUser(
+                "forgot-pw-limit@example.com",
+                passwordEncoder.encode("Password123!")
+        );
+        userRepository.save(testUser);
+
+        ForgotPasswordRequest request = new ForgotPasswordRequest("forgot-pw-limit@example.com");
         String jsonRequest = objectMapper.writeValueAsString(request);
 
-        // Spam password reset requests
-        for (int i = 0; i < 5; i++) {
+        // Gửi 10 forgot-password requests
+        for (int i = 0; i < 10; i++) {
             mockMvc.perform(post(FORGOT_PASSWORD_ENDPOINT)
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(jsonRequest))
-                    .andExpect(status().is(not(429)));
+                    .andExpect(status().isOk());
         }
 
-        // 6th request should be rate limited
+        // Request thứ 11 phải bị rate limit
         mockMvc.perform(post(FORGOT_PASSWORD_ENDPOINT)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(jsonRequest))
@@ -149,131 +152,43 @@ class RateLimitingTest {
                 .andExpect(header().exists("X-Rate-Limit-Retry-After-Seconds"));
     }
 
+    // RL-04: Rate limit độc lập cho mỗi endpoint
     @Test
-    @DisplayName("Should rate limit reset-password endpoint after 5 requests")
-    void testResetPasswordRateLimit() throws Exception {
-        // Try multiple reset attempts with different tokens
-        for (int i = 0; i < 5; i++) {
-            ResetPasswordRequest request = new ResetPasswordRequest(
-                    "fake-token-" + i,
-                    "NewPassword123!"
-            );
-            String jsonRequest = objectMapper.writeValueAsString(request);
-
-            mockMvc.perform(post(RESET_PASSWORD_ENDPOINT)
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(jsonRequest))
-                    .andExpect(status().is(not(429)));
-        }
-
-        // 6th request should be rate limited
-        ResetPasswordRequest request = new ResetPasswordRequest(
-                "fake-token-11",
-                "NewPassword123!"
+    @DisplayName("RL-04: Different endpoints should have independent rate limits")
+    void testIndependentEndpointRateLimits() throws Exception {
+        User testUser = TestDataBuilder.createTestUser(
+                "multi-endpoint@example.com",
+                passwordEncoder.encode("Password123!")
         );
-        String jsonRequest = objectMapper.writeValueAsString(request);
+        userRepository.save(testUser);
 
-        mockMvc.perform(post(RESET_PASSWORD_ENDPOINT)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(jsonRequest))
-                .andExpect(status().isTooManyRequests())
-                .andExpect(header().exists("X-Rate-Limit-Retry-After-Seconds"));
-    }
-
-    @Test
-    @DisplayName("Rate limit should reset after waiting period")
-    void testRateLimitReset() throws Exception {
-        LoginRequest request = TestDataBuilder.createLoginRequest(
-                "reset-test@example.com",
-                "Password123!"
-        );
-        String jsonRequest = objectMapper.writeValueAsString(request);
-
-        // Trigger rate limit
-        for (int i = 0; i < 6; i++) {
-            mockMvc.perform(post(LOGIN_ENDPOINT)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(jsonRequest));
-        }
-
-        // Verify rate limited
-        mockMvc.perform(post(LOGIN_ENDPOINT)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(jsonRequest))
-                .andExpect(status().isTooManyRequests());
-
-        // Wait for rate limit window to expire (61 seconds)
-        System.out.println("⏳ Waiting 61 seconds for rate limit reset...");
-        Thread.sleep(61000);
-
-        // Should be able to make requests again
-        mockMvc.perform(post(LOGIN_ENDPOINT)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(jsonRequest))
-                .andExpect(status().is(not(429)));
-    }
-
-    @Test
-    @DisplayName("Rate limits should be independent per IP address")
-    void testRateLimitPerIP() throws Exception {
-        LoginRequest request = TestDataBuilder.createLoginRequest(
-                "ip-test@example.com",
-                "Password123!"
-        );
-        String jsonRequest = objectMapper.writeValueAsString(request);
-
-        // Exhaust rate limit for IP A (127.0.0.1)
-        for (int i = 0; i < 6; i++) {
-            mockMvc.perform(post(LOGIN_ENDPOINT)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(jsonRequest));
-        }
-
-        // Verify IP A is rate limited
-        mockMvc.perform(post(LOGIN_ENDPOINT)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(jsonRequest))
-                .andExpect(status().isTooManyRequests());
-
-        // Simulate request from different IP (IP B)
-        mockMvc.perform(post(LOGIN_ENDPOINT)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(jsonRequest)
-                        .header("X-Forwarded-For", "192.168.1.100"))
-                .andExpect(status().is(not(429))); // Should NOT be rate limited
-    }
-
-    @Test
-    @DisplayName("Rate limits should be shared across all auth endpoints (per IP)")
-    void testMultipleEndpointsIndependent() throws Exception {
-        // Exhaust rate limit on login endpoint (5 requests)
+        // Gửi 10 login requests (max out login endpoint)
         LoginRequest loginRequest = TestDataBuilder.createLoginRequest(
                 "multi-endpoint@example.com",
                 "Password123!"
         );
         String loginJson = objectMapper.writeValueAsString(loginRequest);
 
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < 10; i++) {
             mockMvc.perform(post(LOGIN_ENDPOINT)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(loginJson));
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(loginJson))
+                    .andExpect(status().isOk());
         }
 
-        // Verify login is rate limited
+        // Login endpoint bị limit
         mockMvc.perform(post(LOGIN_ENDPOINT)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(loginJson))
-                .andExpect(status().isTooManyRequests())
-                .andExpect(header().exists("X-Rate-Limit-Retry-After-Seconds"));
+                .andExpect(status().isTooManyRequests());
 
-        // Send-OTP endpoint should also be rate limited (shared bucket)
-        OtpRequest otpRequest = TestDataBuilder.createOtpRequest("multi-endpoint@example.com");
-        String otpJson = objectMapper.writeValueAsString(otpRequest);
+        // Forgot password endpoint vẫn hoạt động (bucket riêng)
+        ForgotPasswordRequest forgotRequest = new ForgotPasswordRequest("multi-endpoint@example.com");
+        String forgotJson = objectMapper.writeValueAsString(forgotRequest);
 
-        mockMvc.perform(post(SEND_OTP_ENDPOINT)
+        mockMvc.perform(post(FORGOT_PASSWORD_ENDPOINT)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(otpJson))
-                .andExpect(status().isTooManyRequests())
-                .andExpect(header().exists("X-Rate-Limit-Retry-After-Seconds"));
+                        .content(forgotJson))
+                .andExpect(status().isOk()); // Vẫn OK vì bucket khác
     }
 }

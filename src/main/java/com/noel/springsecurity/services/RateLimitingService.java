@@ -21,8 +21,11 @@ public class RateLimitingService {
     }
 
     private Bucket createNewBucket(String key) {
-        // Enterprise Rule: Allow 5 requests per 1 minute
-        Bandwidth limit = Bandwidth.classic(5, Refill.greedy(5, Duration.ofMinutes(1)));
+        // Allow 10 requests per 1 minute
+        // Anti-brute force (5 failed attempts) will trigger before rate limit for failed auth
+        // This gives enough headroom for legitimate retries
+        // Use intervally() to refill all tokens at once (not gradually)
+        Bandwidth limit = Bandwidth.classic(10, Refill.intervally(10, Duration.ofMinutes(1)));
         return Bucket.builder()
                 .addLimit(limit)
                 .build();

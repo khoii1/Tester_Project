@@ -43,7 +43,7 @@ public class GlobalExceptionHandler {
 
         ApiErrorResponse response = ApiErrorResponse.builder()
                 .statusCode(HttpStatus.BAD_REQUEST.value())
-                .errorReason("Validation Failed")
+                .errorReason("Lỗi xác thực")
                 .message(errors)
                 .build();
 
@@ -65,7 +65,7 @@ public class GlobalExceptionHandler {
     // Handle Disabled Account (Email not verified)
     @ExceptionHandler(DisabledException.class)
     public ResponseEntity<ApiErrorResponse> handleDisabledAccount(DisabledException ex) {
-        return buildResponse(HttpStatus.UNAUTHORIZED, "Account is disabled or email not verified");
+        return buildResponse(HttpStatus.UNAUTHORIZED, "Tài khoản đã bị vô hiệu hóa hoặc email chưa được xác thực. Vui lòng kiểm tra email của bạn.");
     }
 
     // Handle User Already Exists
@@ -86,19 +86,19 @@ public class GlobalExceptionHandler {
     // Handle Expired JWT (Crucial for Refresh Token flow)
     @ExceptionHandler(ExpiredJwtException.class)
     public ResponseEntity<ApiErrorResponse> handleExpiredJwt(ExpiredJwtException ex) {
-        return buildResponse(HttpStatus.UNAUTHORIZED, "Token has expired. Please refresh your session.");
+        return buildResponse(HttpStatus.UNAUTHORIZED, "Phiên đăng nhập của bạn đã hết hạn. Vui lòng đăng nhập lại.");
     }
 
     // Handle Invalid Signature / Malformed Token (Security)
     @ExceptionHandler({SignatureException.class, io.jsonwebtoken.MalformedJwtException.class, io.jsonwebtoken.security.SecurityException.class})
     public ResponseEntity<ApiErrorResponse> handleInvalidJwt(Exception ex) {
-        return buildResponse(HttpStatus.UNAUTHORIZED, "Invalid authentication token.");
+        return buildResponse(HttpStatus.UNAUTHORIZED, "Phiên đăng nhập không hợp lệ. Vui lòng đăng nhập lại.");
     }
 
     // Catch-all for other JWT errors
     @ExceptionHandler(JwtException.class)
     public ResponseEntity<ApiErrorResponse> handleGenericJwt(JwtException ex) {
-        return buildResponse(HttpStatus.UNAUTHORIZED, "Authentication error.");
+        return buildResponse(HttpStatus.UNAUTHORIZED, "Có lỗi xảy ra với phiên đăng nhập. Vui lòng thử lại.");
     }
 
     // Handle Expired Verification link toke
@@ -121,16 +121,31 @@ public class GlobalExceptionHandler {
                 .body(response);
     }
 
+    // Handle Account Locked (429 Too Many Requests)
+    // Changed from 423 to 429 because anti-brute force is a type of rate limiting
+    @ExceptionHandler(AccountLockedException.class)
+    public ResponseEntity<ApiErrorResponse> handleAccountLocked(AccountLockedException ex) {
+        ApiErrorResponse response = ApiErrorResponse.builder()
+                .statusCode(HttpStatus.TOO_MANY_REQUESTS.value())
+                .errorReason(HttpStatus.TOO_MANY_REQUESTS.getReasonPhrase())
+                .message(ex.getMessage())
+                .build();
+        
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("X-Rate-Limit-Retry-After-Seconds", String.valueOf(10 * 60)) // 10 minutes in seconds
+                .body(response);
+    }
+
     // Handle RBAC Access Denied
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<ApiErrorResponse> handleAccessDeniedException(AccessDeniedException ex) {
-        return buildResponse(HttpStatus.FORBIDDEN, "You do not have permission to access this resource");
+        return buildResponse(HttpStatus.FORBIDDEN, "Bạn không có quyền truy cập tài nguyên này. Vui lòng liên hệ quản trị viên.");
     }
 
     // Handle unsupported HTTP methods
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
     public ResponseEntity<ApiErrorResponse> requestMethodNotAllowed(HttpRequestMethodNotSupportedException ex) {
-        return buildResponse(HttpStatus.METHOD_NOT_ALLOWED, "Method not allowed for this resource.");
+        return buildResponse(HttpStatus.METHOD_NOT_ALLOWED, "Phương thức yêu cầu không được hỗ trợ.");
     }
 
 
@@ -139,6 +154,6 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiErrorResponse> handleGlobalException(Exception ex) {
         log.error("Unhandled exception: {}", ex.getMessage());
         ex.printStackTrace();
-        return buildResponse(HttpStatus.INTERNAL_SERVER_ERROR, "An unexpected error occurred");
+        return buildResponse(HttpStatus.INTERNAL_SERVER_ERROR, "Đã xảy ra lỗi không mong muốn. Vui lòng thử lại sau.");
     }
 }

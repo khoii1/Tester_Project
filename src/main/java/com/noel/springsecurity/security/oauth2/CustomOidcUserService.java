@@ -1,12 +1,5 @@
 package com.noel.springsecurity.security.oauth2;
 
-import com.noel.springsecurity.entities.User;
-import com.noel.springsecurity.enums.EOAuthProvider;
-import com.noel.springsecurity.security.UserPrincipal;
-import com.noel.springsecurity.security.oauth2.user.OAuth2UserInfo;
-import com.noel.springsecurity.security.oauth2.user.OAuth2UserInfoFactory;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.authentication.InternalAuthenticationServiceException;
 import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserRequest;
 import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserService;
@@ -15,6 +8,15 @@ import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+
+import com.noel.springsecurity.entities.User;
+import com.noel.springsecurity.enums.EOAuthProvider;
+import com.noel.springsecurity.security.UserPrincipal;
+import com.noel.springsecurity.security.oauth2.user.OAuth2UserInfo;
+import com.noel.springsecurity.security.oauth2.user.OAuth2UserInfoFactory;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Handles OIDC authentication (Google, Auth0, Okta, etc.)
@@ -45,7 +47,7 @@ public class CustomOidcUserService extends OidcUserService {
                 oidcUser.getAttributes()
         );
         if (!StringUtils.hasText(oAuth2UserInfo.getEmail())) {
-            throw new OAuth2AuthenticationException("Email not found from OIDC provider");
+            throw new OAuth2AuthenticationException("Không tìm thấy email từ nhà cung cấp OIDC");
         }
         EOAuthProvider provider = EOAuthProvider.valueOf(registrationId.toUpperCase());
         User user = oAuth2UserHandler.processOAuth2User(provider, oAuth2UserInfo);

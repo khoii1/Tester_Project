@@ -1,12 +1,5 @@
 package com.noel.springsecurity.security.oauth2;
 
-import com.noel.springsecurity.entities.User;
-import com.noel.springsecurity.enums.EOAuthProvider;
-import com.noel.springsecurity.security.UserPrincipal;
-import com.noel.springsecurity.security.oauth2.user.OAuth2UserInfo;
-import com.noel.springsecurity.security.oauth2.user.OAuth2UserInfoFactory;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.authentication.InternalAuthenticationServiceException;
 import org.springframework.security.oauth2.client.userinfo.DefaultOAuth2UserService;
 import org.springframework.security.oauth2.client.userinfo.OAuth2UserRequest;
@@ -15,6 +8,15 @@ import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+
+import com.noel.springsecurity.entities.User;
+import com.noel.springsecurity.enums.EOAuthProvider;
+import com.noel.springsecurity.security.UserPrincipal;
+import com.noel.springsecurity.security.oauth2.user.OAuth2UserInfo;
+import com.noel.springsecurity.security.oauth2.user.OAuth2UserInfoFactory;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Handles non-OIDC OAuth2 authentication (GitHub, Facebook, etc.)
@@ -46,7 +48,7 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
                 oAuth2User.getAttributes()
         );
         if (!StringUtils.hasText(oAuth2UserInfo.getEmail())) {
-            throw new OAuth2AuthenticationException("Email not found from OAuth2 provider");
+            throw new OAuth2AuthenticationException("Không tìm thấy email từ nhà cung cấp OAuth2");
         }
         EOAuthProvider provider = EOAuthProvider.valueOf(registrationId.toUpperCase());
         User user = oAuth2UserHandler.processOAuth2User(provider, oAuth2UserInfo);

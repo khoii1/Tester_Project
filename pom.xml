@@ -132,6 +132,12 @@
             <version>8.10.1</version>
         </dependency>
 
+        <!-- Caffeine Cache for Anti-Bruteforce -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
+
         <!-- swagger dependency -->
         <dependency>
             <groupId>org.springdoc</groupId>
@@ -181,6 +187,10 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
+                    <jvmArguments>
+                        -Dfile.encoding=UTF-8
+                        -Dconsole.encoding=UTF-8
+                    </jvmArguments>
                     <excludes>
                         <exclude>
                             <groupId>org.projectlombok</groupId>

@@ -1,5 +1,12 @@
 package com.noel.springsecurity.services.impls;
 
+import java.time.LocalDateTime;
+import java.util.Optional;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
 import com.noel.springsecurity.entities.RefreshToken;
 import com.noel.springsecurity.entities.User;
 import com.noel.springsecurity.exceptions.TokenRefreshException;
@@ -7,13 +14,8 @@ import com.noel.springsecurity.repositories.IRefreshTokenRepository;
 import com.noel.springsecurity.security.jwt.JwtService;
 import com.noel.springsecurity.services.IRefreshTokenService;
 import com.noel.springsecurity.utils.TokenHashUtil;
-import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
-import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 
 @Service
 @RequiredArgsConstructor
@@ -51,7 +53,7 @@ public class RefreshTokenServiceImpl implements IRefreshTokenService {
     public RefreshToken verifyExpiration(RefreshToken token) {
         if (token.isRevoked()) {
             refreshTokenRepository.delete(token);
-            throw new TokenRefreshException("Refresh token expired. Please login again.");
+            throw new TokenRefreshException("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.");
         }
         return token;
     }

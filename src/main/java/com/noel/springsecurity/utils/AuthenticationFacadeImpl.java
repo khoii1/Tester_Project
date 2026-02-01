@@ -1,13 +1,15 @@
 package com.noel.springsecurity.utils;
 
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Component;
+
 import com.noel.springsecurity.entities.User;
 import com.noel.springsecurity.exceptions.ResourceNotFoundException;
 import com.noel.springsecurity.repositories.IUserRepository;
 import com.noel.springsecurity.security.UserPrincipal;
+
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
@@ -23,6 +25,6 @@ public class AuthenticationFacadeImpl implements IAuthenticationFacade {
         }
         UserPrincipal principal = (UserPrincipal) authentication.getPrincipal();
         return userRepository.findById(principal.getId())
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng"));
     }
 }

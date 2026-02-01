@@ -1,475 +1,986 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="vi">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Kiểm thử Rate Limiting & Anti-Bruteforce</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', sans-serif; background: #ecf0f1; min-height: 100vh; padding: 20px; }
-        .container { max-width: 1400px; margin: 0 auto; }
-        .header { background: white; padding: 30px; border-radius: 8px; margin-bottom: 30px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); text-align: center; border-top: 4px solid #2c3e50; }
-        .header h1 { color: #2c3e50; font-size: 2.5em; margin-bottom: 10px; }
-        .header .subtitle { color: #666; font-size: 1.2em; margin-bottom: 20px; }
-        .header .info { background: #f8f9fa; padding: 15px; border-radius: 8px; display: inline-block; }
-        .header .info strong { color: #dc3545; font-size: 1.1em; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(450px, 1fr)); gap: 25px; margin-bottom: 25px; }
-        .test-card { background: white; border-radius: 8px; padding: 25px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); transition: transform 0.3s; border-left: 4px solid #3498db; }
-        .test-card:hover { transform: translateY(-2px); }
-        .test-card h2 { color: #2c3e50; margin-bottom: 15px; font-size: 1.6em; border-bottom: 2px solid #bdc3c7; padding-bottom: 10px; }
-        .objective { background: #e8f4f8; padding: 12px; border-radius: 6px; margin-bottom: 15px; font-size: 14px; color: #0c5460; border-left: 4px solid #3498db; }
-        .objective strong { color: #2c3e50; }
-        .form-group { margin-bottom: 15px; }
-        label { display: block; margin-bottom: 5px; color: #333; font-weight: 600; font-size: 14px; }
-        input { width: 100%; padding: 12px; border: 2px solid #e1e8ed; border-radius: 8px; font-size: 14px; transition: border-color 0.3s; }
-        input:focus { outline: none; border-color: #3498db; box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1); }
-        input[readonly] { background: #f8f9fa; color: #666; }
-        .button-group { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px; }
-        button { padding: 12px; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.3s; }
-        .btn-primary { background: #3498db; color: white; }
-        .btn-primary:hover { background: #2980b9; transform: translateY(-2px); box-shadow: 0 4px 8px rgba(52, 152, 219, 0.3); }
-        .btn-danger { background: #dc3545; color: white; }
-        .btn-danger:hover { background: #c82333; transform: translateY(-2px); box-shadow: 0 5px 15px rgba(220, 53, 69, 0.3); }
-        button:disabled { background: #ccc; cursor: not-allowed; transform: none; }
-        .counter { background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #3498db; }
-        .counter-value { font-size: 2em; font-weight: bold; color: #3498db; }
-        .counter.warning { border-left-color: #ffc107; }
-        .counter.warning .counter-value { color: #ffc107; }
-        .counter.danger { border-left-color: #dc3545; }
-        .counter.danger .counter-value { color: #dc3545; }
-        .response { margin-top: 15px; padding: 15px; border-radius: 8px; font-size: 14px; display: none; animation: slideIn 0.3s; }
-        @keyframes slideIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
-        .success { background-color: #d4edda; border: 2px solid #c3e6cb; color: #155724; }
-        .error { background-color: #f8d7da; border: 2px solid #f5c6cb; color: #721c24; }
-        .info { background-color: #d1ecf1; border: 2px solid #bee5eb; color: #0c5460; }
-        .warning { background-color: #fff3cd; border: 2px solid #ffeaa7; color: #856404; }
-        .stats { background: #f8f9fa; padding: 15px; border-radius: 8px; margin-top: 15px; }
-        .stats h4 { color: #2c3e50; margin-bottom: 10px; font-weight: 600; }
-        .stat-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #dee2e6; }
-        .stat-row:last-child { border-bottom: none; }
-        .stat-label { color: #666; font-size: 14px; }
-        .stat-value { font-weight: bold; color: #333; font-size: 16px; }
-        .stat-value.highlight { color: #dc3545; font-size: 18px; }
-        .timer { font-size: 1.5em; font-weight: bold; color: #dc3545; text-align: center; padding: 10px; background: #fff5f5; border-radius: 8px; margin: 10px 0; }
-        .btn-reset { background: #6c757d; color: white; padding: 8px 16px; border-radius: 6px; font-size: 13px; }
-        .btn-reset:hover { background: #5a6268; }
-        .note { background: #fff3cd; padding: 10px; border-radius: 6px; margin-top: 10px; font-size: 13px; color: #856404; border-left: 3px solid #ffc107; }
-        .section-title { color: #2c3e50; font-size: 14px; font-weight: 600; margin: 15px 0 10px 0; padding-bottom: 5px; border-bottom: 1px dashed #bdc3c7; }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family: "Segoe UI", sans-serif;
+        background: #ecf0f1;
+        min-height: 100vh;
+        padding: 20px;
+      }
+      .container {
+        max-width: 1400px;
+        margin: 0 auto;
+      }
+      .header {
+        background: white;
+        padding: 30px;
+        border-radius: 8px;
+        margin-bottom: 30px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        text-align: center;
+        border-top: 4px solid #2c3e50;
+      }
+      .header h1 {
+        color: #2c3e50;
+        font-size: 2.5em;
+        margin-bottom: 10px;
+      }
+      .header .subtitle {
+        color: #666;
+        font-size: 1.2em;
+        margin-bottom: 20px;
+      }
+      .header .info {
+        background: #f8f9fa;
+        padding: 15px;
+        border-radius: 8px;
+        display: inline-block;
+      }
+      .header .info strong {
+        color: #dc3545;
+        font-size: 1.1em;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+        gap: 25px;
+        margin-bottom: 25px;
+      }
+      .test-card {
+        background: white;
+        border-radius: 8px;
+        padding: 25px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        transition: transform 0.3s;
+        border-left: 4px solid #3498db;
+      }
+      .test-card:hover {
+        transform: translateY(-2px);
+      }
+      .test-card h2 {
+        color: #2c3e50;
+        margin-bottom: 15px;
+        font-size: 1.6em;
+        border-bottom: 2px solid #bdc3c7;
+        padding-bottom: 10px;
+      }
+      .objective {
+        background: #e8f4f8;
+        padding: 12px;
+        border-radius: 6px;
+        margin-bottom: 15px;
+        font-size: 14px;
+        color: #0c5460;
+        border-left: 4px solid #3498db;
+      }
+      .objective strong {
+        color: #2c3e50;
+      }
+      .form-group {
+        margin-bottom: 15px;
+      }
+      label {
+        display: block;
+        margin-bottom: 5px;
+        color: #333;
+        font-weight: 600;
+        font-size: 14px;
+      }
+      input {
+        width: 100%;
+        padding: 12px;
+        border: 2px solid #e1e8ed;
+        border-radius: 8px;
+        font-size: 14px;
+        transition: border-color 0.3s;
+      }
+      input:focus {
+        outline: none;
+        border-color: #3498db;
+        box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+      }
+      input[readonly] {
+        background: #f8f9fa;
+        color: #666;
+      }
+      .button-group {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-top: 15px;
+      }
+      button {
+        padding: 12px;
+        border: none;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s;
+      }
+      .btn-primary {
+        background: #3498db;
+        color: white;
+      }
+      .btn-primary:hover {
+        background: #2980b9;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(52, 152, 219, 0.3);
+      }
+      .btn-danger {
+        background: #dc3545;
+        color: white;
+      }
+      .btn-danger:hover {
+        background: #c82333;
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(220, 53, 69, 0.3);
+      }
+      button:disabled {
+        background: #ccc;
+        cursor: not-allowed;
+        transform: none;
+      }
+      .counter {
+        background: #f8f9fa;
+        padding: 15px;
+        border-radius: 8px;
+        margin: 15px 0;
+        border-left: 4px solid #3498db;
+      }
+      .counter-value {
+        font-size: 2em;
+        font-weight: bold;
+        color: #3498db;
+      }
+      .counter.warning {
+        border-left-color: #ffc107;
+      }
+      .counter.warning .counter-value {
+        color: #ffc107;
+      }
+      .counter.danger {
+        border-left-color: #dc3545;
+      }
+      .counter.danger .counter-value {
+        color: #dc3545;
+      }
+      .response {
+        margin-top: 15px;
+        padding: 15px;
+        border-radius: 8px;
+        font-size: 14px;
+        display: none;
+        animation: slideIn 0.3s;
+      }
+      @keyframes slideIn {
+        from {
+          opacity: 0;
+          transform: translateY(-10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      .success {
+        background-color: #d4edda;
+        border: 2px solid #c3e6cb;
+        color: #155724;
+      }
+      .error {
+        background-color: #f8d7da;
+        border: 2px solid #f5c6cb;
+        color: #721c24;
+      }
+      .info {
+        background-color: #d1ecf1;
+        border: 2px solid #bee5eb;
+        color: #0c5460;
+      }
+      .warning {
+        background-color: #fff3cd;
+        border: 2px solid #ffeaa7;
+        color: #856404;
+      }
+      .stats {
+        background: #f8f9fa;
+        padding: 15px;
+        border-radius: 8px;
+        margin-top: 15px;
+      }
+      .stats h4 {
+        color: #2c3e50;
+        margin-bottom: 10px;
+        font-weight: 600;
+      }
+      .stat-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid #dee2e6;
+      }
+      .stat-row:last-child {
+        border-bottom: none;
+      }
+      .stat-label {
+        color: #666;
+        font-size: 14px;
+      }
+      .stat-value {
+        font-weight: bold;
+        color: #333;
+        font-size: 16px;
+      }
+      .stat-value.highlight {
+        color: #dc3545;
+        font-size: 18px;
+      }
+      .timer {
+        font-size: 1.5em;
+        font-weight: bold;
+        color: #dc3545;
+        text-align: center;
+        padding: 10px;
+        background: #fff5f5;
+        border-radius: 8px;
+        margin: 10px 0;
+      }
+      .btn-reset {
+        background: #6c757d;
+        color: white;
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-size: 13px;
+      }
+      .btn-reset:hover {
+        background: #5a6268;
+      }
+      .note {
+        background: #fff3cd;
+        padding: 10px;
+        border-radius: 6px;
+        margin-top: 10px;
+        font-size: 13px;
+        color: #856404;
+        border-left: 3px solid #ffc107;
+      }
+      .section-title {
+        color: #2c3e50;
+        font-size: 14px;
+        font-weight: 600;
+        margin: 15px 0 10px 0;
+        padding-bottom: 5px;
+        border-bottom: 1px dashed #bdc3c7;
+      }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <div class="container">
-        <!-- Header -->
-        <div class="header">
-            <h1>Kiểm thử Rate Limiting và Anti-Bruteforce</h1>
-        </div>
+      <!-- Header -->
+      <div class="header">
+        <h1>Kiểm thử Rate Limiting và Anti-Bruteforce</h1>
+      </div>
 
-        <!-- Test Cards Grid -->
-        <div class="grid">
-            <!-- Login Test Card -->
-            <div class="test-card">
-                <h2>Test 1: Login Anti-Bruteforce</h2>
-                
-                <div class="counter" id="loginCounter">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div><small>Số lần thử:</small><div class="counter-value" id="loginCount">0</div></div>
-                        <button onclick="resetLoginCounter()" class="btn-reset">Reset</button>
-                    </div>
-                </div>
+      <!-- Test Cards Grid -->
+      <div class="grid">
+        <!-- Login Test Card -->
+        <div class="test-card">
+          <h2>Test 1: Login Anti-Bruteforce</h2>
 
-                <div class="form-group">
-                    <label>Email (không tồn tại):</label>
-                    <input type="email" id="loginEmail" placeholder="Nhập email..." value="">
-                </div>
-
-                <div class="form-group">
-                    <label>Password (sai):</label>
-                    <input type="password" id="loginPassword" placeholder="Nhập password..." value="">
-                </div>
-
-                <button id="loginBtn" class="btn-primary" onclick="testLogin()" style="width: 100%; margin-top: 15px;">
-                    Thử Login
-                </button>
-
-                <div id="loginResponse" class="response"></div>
-
-                <div class="stats">
-                    <h4>Thống kê</h4>
-                    <div class="stat-row">
-                        <span class="stat-label">Thất bại (401):</span>
-                        <span class="stat-value" id="loginFailed">0</span>
-                    </div>
-                    <div class="stat-row">
-                        <span class="stat-label">Rate Limited (429):</span>
-                        <span class="stat-value highlight" id="loginRateLimited">0</span>
-                    </div>
-                </div>
+          <div class="counter" id="loginCounter">
+            <div>
+              <small>Số lần thử:</small>
+              <div class="counter-value" id="loginCount">0</div>
             </div>
+          </div>
 
-            <!-- OTP Test Card -->
-            <div class="test-card">
-                <h2>Test 2: OTP Anti-Bruteforce</h2>
-                
-                <div class="counter" id="otpCounter">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div><small>Số lần thử:</small><div class="counter-value" id="otpCount">0</div></div>
-                        <button onclick="resetOtpCounter()" class="btn-reset">Reset</button>
-                    </div>
-                </div>
+          <div class="form-group">
+            <label>Email (không tồn tại):</label>
+            <input
+              type="email"
+              id="loginEmail"
+              placeholder="Nhập email..."
+              value=""
+            />
+          </div>
 
-                <div class="form-group">
-                    <label>Email:</label>
-                    <input type="email" id="otpEmail" placeholder="Nhập email..." value="">
-                </div>
+          <div class="form-group">
+            <label>Password (sai):</label>
+            <input
+              type="password"
+              id="loginPassword"
+              placeholder="Nhập password..."
+              value=""
+            />
+          </div>
 
-                <button id="sendOtpBtn" class="btn-primary" onclick="testSendOtp()" style="width: 100%; margin-top: 15px;">
-                    Gửi OTP
-                </button>
+          <button
+            id="loginBtn"
+            class="btn-primary"
+            onclick="testLogin()"
+            style="width: 100%; margin-top: 15px"
+          >
+            Đăng nhập
+          </button>
 
-                <div id="verifyOtpSection" style="display: none; margin-top: 20px; padding-top: 20px; border-top: 2px dashed #bdc3c7;">
-                    <div class="section-title">Bước 2: Xác thực OTP</div>
-                    <div class="form-group">
-                        <label>Mã OTP (kiểm tra email):</label>
-                        <input type="text" id="otpCode" placeholder="Nhập mã OTP..." maxlength="6">
-                    </div>
-                    <button id="verifyOtpBtn" class="btn-primary" onclick="testVerifyOtp()" style="width: 100%;">
-                        Xác thực OTP
-                    </button>
-                </div>
+          <div id="loginResponse" class="response"></div>
 
-                <div id="otpResponse" class="response"></div>
-
-                <div class="stats">
-                    <h4>Thống kê</h4>
-                    <div class="stat-row">
-                        <span class="stat-label">OTP - Thành công:</span>
-                        <span class="stat-value" id="otpSent">0</span>
-                    </div>
-                    <div class="stat-row">
-                        <span class="stat-label">OTP - Rate Limited (429):</span>
-                        <span class="stat-value highlight" id="sendOtpRateLimited">0</span>
-                    </div>
-                    <div class="stat-row">
-                        <span class="stat-label">Verify OTP - Thất bại:</span>
-                        <span class="stat-value" id="otpFailed">0</span>
-                    </div>
-                    <div class="stat-row">
-                        <span class="stat-label">Verify OTP - Rate Limited (429):</span>
-                        <span class="stat-value highlight" id="verifyOtpRateLimited">0</span>
-                    </div>
-                </div>
+          <div class="stats">
+            <h4>Thống kê</h4>
+            <div class="stat-row">
+              <span class="stat-label">Thất bại (401):</span>
+              <span class="stat-value" id="loginFailed">0</span>
             </div>
-
-            <!-- Reset Password Test Card -->
-            <div class="test-card">
-                <h2>Test 3: Reset Password Anti-Bruteforce</h2>
-                
-                <div class="counter" id="resetCounter">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div><small>Số lần thử:</small><div class="counter-value" id="resetCount">0</div></div>
-                        <button onclick="resetResetCounter()" class="btn-reset">Reset</button>
-                    </div>
-                </div>
-
-                <div class="form-group">
-                    <label>Email:</label>
-                    <input type="email" id="forgotEmail" placeholder="Nhập email..." value="">
-                </div>
-
-                <button id="forgotBtn" class="btn-primary" onclick="testForgotPassword()" style="width: 100%; margin-top: 15px;">
-                    Forgot Password
-                </button>
-
-                <div id="resetResponse" class="response"></div>
-
-                <div class="stats">
-                    <h4>Thống kê</h4>
-                    <div class="stat-row">
-                        <span class="stat-label">Forgot - Thành công:</span>
-                        <span class="stat-value" id="forgotSent">0</span>
-                    </div>
-                    <div class="stat-row">
-                        <span class="stat-label">Forgot - Rate Limited (429):</span>
-                        <span class="stat-value highlight" id="forgotRateLimited">0</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
+            <div class="stat-row">
+              <span class="stat-label">Account Locked - ABF (429):</span>
+              <span
                 class="stat-value"
-                </div>
+                style="color: #dc3545; font-weight: bold"
+                id="loginLocked"
+                >0</span
+              >
             </div>
+            <div class="stat-row">
+              <span class="stat-label">Rate Limited - RL (429):</span>
+              <span class="stat-value highlight" id="loginRateLimited">0</span>
+            </div>
+          </div>
         </div>
+
+        <!-- OTP Test Card -->
+        <div class="test-card">
+          <h2>Test 2: OTP Anti-Bruteforce</h2>
+
+          <div class="counter" id="otpCounter">
+            <div>
+              <small>Số lần thử:</small>
+              <div class="counter-value" id="otpCount">0</div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Email:</label>
+            <input
+              type="email"
+              id="otpEmail"
+              placeholder="Nhập email..."
+              value=""
+            />
+          </div>
+
+          <button
+            id="sendOtpBtn"
+            class="btn-primary"
+            onclick="testSendOtp()"
+            style="width: 100%; margin-top: 15px"
+          >
+            Gửi OTP
+          </button>
+
+          <div
+            id="verifyOtpSection"
+            style="
+              display: none;
+              margin-top: 20px;
+              padding-top: 20px;
+              border-top: 2px dashed #bdc3c7;
+            "
+          >
+            <div class="section-title">Bước 2: Xác thực OTP</div>
+            <div class="form-group">
+              <label>Mã OTP (kiểm tra email):</label>
+              <input
+                type="text"
+                id="otpCode"
+                placeholder="Nhập mã OTP..."
+                maxlength="6"
+              />
+            </div>
+            <button
+              id="verifyOtpBtn"
+              class="btn-primary"
+              onclick="testVerifyOtp()"
+              style="width: 100%"
+            >
+              Xác thực OTP
+            </button>
+          </div>
+
+          <div id="otpResponse" class="response"></div>
+
+          <div class="stats">
+            <h4>Thống kê</h4>
+            <div class="stat-row">
+              <span class="stat-label">OTP - Thành công:</span>
+              <span class="stat-value" id="otpSent">0</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Verify OTP - Thất bại:</span>
+              <span class="stat-value" id="otpFailed">0</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Account Locked - ABF (429):</span>
+              <span
+                class="stat-value"
+                style="color: #dc3545; font-weight: bold"
+                id="otpLocked"
+                >0</span
+              >
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Rate Limited - RL (429):</span>
+              <span class="stat-value highlight" id="otpRateLimited">0</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Reset Password Test Card -->
+        <div class="test-card">
+          <h2>Test 3: Reset Password Anti-Bruteforce</h2>
+
+          <div class="counter" id="resetCounter">
+            <div>
+              <small>Số lần thử:</small>
+              <div class="counter-value" id="resetCount">0</div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Email:</label>
+            <input
+              type="email"
+              id="forgotEmail"
+              placeholder="Nhập email..."
+              value=""
+            />
+          </div>
+
+          <button
+            id="forgotBtn"
+            class="btn-primary"
+            onclick="testForgotPassword()"
+            style="width: 100%; margin-top: 15px"
+          >
+            Quên mật khẩu
+          </button>
+
+          <div id="resetResponse" class="response"></div>
+
+          <div class="stats">
+            <h4>Thống kê</h4>
+            <div class="stat-row">
+              <span class="stat-label">Forgot - Thành công:</span>
+              <span class="stat-value" id="forgotSent">0</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Thất bại (400):</span>
+              <span class="stat-value" id="forgotFailed">0</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Account Locked - ABF (429):</span>
+              <span
+                class="stat-value"
+                style="color: #dc3545; font-weight: bold"
+                id="forgotLocked"
+                >0</span
+              >
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Rate Limited - RL (429):</span>
+              <span class="stat-value highlight" id="forgotRateLimited">0</span>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <script>
-        const API_BASE = "http://localhost:8080/api/v1/auth";
-        const RATE_LIMIT_DURATION = 60;
-        const rateLimitTimers = {};
-        let stats = { 
-            login: { failed: 0, rateLimited: 0, count: 0 }, 
-            otp: { sent: 0, failed: 0, sendRateLimited: 0, verifyRateLimited: 0, count: 0 }, 
-            reset: { sent: 0, rateLimited: 0, count: 0 } 
+      const API_BASE = "http://localhost:8081/api/v1/auth";
+      const RATE_LIMIT_DURATION = 60;
+      const rateLimitTimers = {};
+      let stats = {
+        login: {
+          failed: 0,
+          rateLimited: 0,
+          locked: 0,
+          count: 0,
+          isLocked: false,
+        },
+        otp: {
+          sent: 0,
+          failed: 0,
+          rateLimited: 0,
+          locked: 0,
+          count: 0,
+          isLocked: false,
+        },
+        reset: {
+          sent: 0,
+          failed: 0,
+          rateLimited: 0,
+          locked: 0,
+          count: 0,
+          isLocked: false,
+        },
+      };
+
+      function showResponse(elementId, message, type = "info") {
+        const el = document.getElementById(elementId);
+        el.className = `response ${type}`;
+        el.innerHTML = message;
+        el.style.display = "block";
+      }
+
+      function updateCounter(type, count) {
+        const counterEl = document.getElementById(`${type}Counter`);
+        const countEl = document.getElementById(`${type}Count`);
+        countEl.textContent = count;
+        counterEl.classList.remove("warning", "danger");
+        if (count >= 5) counterEl.classList.add("danger");
+        else if (count >= 3) counterEl.classList.add("warning");
+      }
+
+      function updateStats(type) {
+        const stat = stats[type];
+        if (type === "login") {
+          document.getElementById("loginFailed").textContent = stat.failed;
+          document.getElementById("loginLocked").textContent = stat.locked;
+          document.getElementById("loginRateLimited").textContent =
+            stat.rateLimited;
+        } else if (type === "otp") {
+          document.getElementById("otpSent").textContent = stat.sent;
+          document.getElementById("otpFailed").textContent = stat.failed;
+          document.getElementById("otpLocked").textContent = stat.locked;
+          document.getElementById("otpRateLimited").textContent =
+            stat.rateLimited;
+        } else if (type === "reset") {
+          document.getElementById("forgotSent").textContent = stat.sent;
+          document.getElementById("forgotFailed").textContent = stat.failed;
+          document.getElementById("forgotLocked").textContent = stat.locked;
+          document.getElementById("forgotRateLimited").textContent =
+            stat.rateLimited;
+        }
+      }
+
+      function handleAccountLock(buttonId, responseId, type, message) {
+        const LOCK_DURATION = 600; // 10 phút
+
+        if (rateLimitTimers[buttonId])
+          clearInterval(rateLimitTimers[buttonId].interval);
+        const button = document.getElementById(buttonId);
+        const originalText = button.textContent;
+        let remainingSeconds = LOCK_DURATION;
+        button.disabled = true;
+
+        const updateCountdown = () => {
+          if (remainingSeconds <= 0) {
+            clearInterval(rateLimitTimers[buttonId].interval);
+            button.disabled = false;
+            button.textContent = originalText;
+            delete rateLimitTimers[buttonId];
+            showResponse(
+              responseId,
+              "Tài khoản/chức năng đã được mở khóa. Bạn có thể tiếp tục.",
+              "success",
+            );
+          } else {
+            const minutes = Math.floor(remainingSeconds / 60);
+            const seconds = remainingSeconds % 60;
+            button.textContent = `Khóa ${minutes}:${seconds.toString().padStart(2, "0")}`;
+            remainingSeconds--;
+          }
         };
+        updateCountdown();
+        rateLimitTimers[buttonId] = {
+          interval: setInterval(updateCountdown, 1000),
+          originalText: originalText,
+        };
+        showResponse(
+          responseId,
+          `<strong style="color:#dc3545;">TÀI KHOẢN/CHỨC NĂNG TẠM THỜI BỊ KHÓA</strong><br><br>${message}`,
+          "error",
+        );
+      }
 
-        function showResponse(elementId, message, type = 'info') {
-            const el = document.getElementById(elementId);
-            el.className = `response ${type}`;
-            el.innerHTML = message;
-            el.style.display = 'block';
+      function handleRateLimit(buttonId, responseId, type) {
+        stats[type].rateLimited++;
+        updateStats(type);
+
+        if (rateLimitTimers[buttonId])
+          clearInterval(rateLimitTimers[buttonId].interval);
+        const button = document.getElementById(buttonId);
+        const originalText = button.textContent;
+        let remainingSeconds = RATE_LIMIT_DURATION;
+        button.disabled = true;
+
+        const updateCountdown = () => {
+          if (remainingSeconds <= 0) {
+            clearInterval(rateLimitTimers[buttonId].interval);
+            button.disabled = false;
+            button.textContent = originalText;
+            delete rateLimitTimers[buttonId];
+            showResponse(responseId, "Bạn có thể tiếp tục sử dụng.", "success");
+          } else {
+            button.textContent = `Đợi ${remainingSeconds}s`;
+            remainingSeconds--;
+          }
+        };
+        updateCountdown();
+        rateLimitTimers[buttonId] = {
+          interval: setInterval(updateCountdown, 1000),
+          originalText: originalText,
+        };
+        showResponse(
+          responseId,
+          `<div class="timer">${RATE_LIMIT_DURATION}s</div><strong style="color:#3498db;">RATE LIMIT - QUÁ NHIỀU YÊU CẦU</strong><br><br>Bạn đã gửi quá nhiều yêu cầu trong thời gian ngắn.<br>Giới hạn: <strong>10 yêu cầu/phút</strong><br>Vui lòng đợi <strong>${RATE_LIMIT_DURATION} giây</strong> để tiếp tục.`,
+          "error",
+        );
+      }
+
+      function resetLoginCounter() {
+        stats.login.count = 0;
+        updateCounter("login", 0);
+      }
+      function resetOtpCounter() {
+        stats.otp.count = 0;
+        updateCounter("otp", 0);
+      }
+      function resetResetCounter() {
+        stats.reset.count = 0;
+        stats.reset.isLocked = false; // Reset lock flag
+        updateCounter("reset", 0);
+      }
+
+      async function testLogin() {
+        const email = document.getElementById("loginEmail").value;
+        const password = document.getElementById("loginPassword").value;
+
+        if (!email || !password) {
+          showResponse(
+            "loginResponse",
+            "Vui lòng nhập email và mật khẩu.",
+            "warning",
+          );
+          return;
         }
 
-        function updateCounter(type, count) {
-            const counterEl = document.getElementById(`${type}Counter`);
-            const countEl = document.getElementById(`${type}Count`);
-            countEl.textContent = count;
-            counterEl.classList.remove('warning', 'danger');
-            if (count >= 5) counterEl.classList.add('danger');
-            else if (count >= 3) counterEl.classList.add('warning');
-        }
-
-        function updateStats(type) {
-            const stat = stats[type];
-            if (type === 'login') {
-                document.getElementById('loginFailed').textContent = stat.failed;
-                document.getElementById('loginRateLimited').textContent = stat.rateLimited;
-            } else if (type === 'otp') {
-                document.getElementById('otpSent').textContent = stat.sent;
-                document.getElementById('sendOtpRateLimited').textContent = stat.sendRateLimited;
-                document.getElementById('otpFailed').textContent = stat.failed;
-                document.getElementById('verifyOtpRateLimited').textContent = stat.verifyRateLimited;
-            } else if (type === 'reset') {
-                document.getElementById('forgotSent').textContent = stat.sent;
-                document.getElementById('forgotRateLimited').textContent = stat.rateLimited;
-            }
-        }
-
-        function handleRateLimit(buttonId, responseId, type, subType = null) {
-            if (type === 'otp' && subType === 'send') {
-                stats.otp.sendRateLimited++;
-            } else if (type === 'otp' && subType === 'verify') {
-                stats.otp.verifyRateLimited++;
+        stats.login.count++;
+        updateCounter("login", stats.login.count);
+        try {
+          const response = await fetch(`${API_BASE}/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ email, password }),
+          });
+          const data = await response.json();
+          if (response.status === 429) {
+            // Phân biệt Anti-Brute Force vs Rate Limiting
+            const message = data.message || data.error || "";
+            if (
+              message.includes("khóa") ||
+              message.includes("locked") ||
+              message.includes("Retry-After") ||
+              message.includes("bi khoa") ||
+              message.includes("khoa do")
+            ) {
+              // Anti-Brute Force: Tài khoản bị khóa
+              stats.login.locked++;
+              stats.login.isLocked = true;
+              updateStats("login");
+              handleAccountLock("loginBtn", "loginResponse", "login", message);
             } else {
-                stats[type].rateLimited++;
+              // Rate Limiting: Gửi quá nhiều yêu cầu
+              handleRateLimit("loginBtn", "loginResponse", "login");
             }
-            updateStats(type);
-            
-            if (rateLimitTimers[buttonId]) clearInterval(rateLimitTimers[buttonId].interval);
-            const button = document.getElementById(buttonId);
-            const originalText = button.textContent;
-            let remainingSeconds = RATE_LIMIT_DURATION;
-            button.disabled = true;
-            
-            const updateCountdown = () => {
-                if (remainingSeconds <= 0) {
-                    clearInterval(rateLimitTimers[buttonId].interval);
-                    button.disabled = false;
-                    button.textContent = originalText;
-                    delete rateLimitTimers[buttonId];
-                    showResponse(responseId, "Bạn có thể tiếp tục.", "success");
-                } else {
-                    button.textContent = `Đợi ${remainingSeconds}s`;
-                    remainingSeconds--;
-                }
-            };
-            updateCountdown();
-            rateLimitTimers[buttonId] = { interval: setInterval(updateCountdown, 1000), originalText: originalText };
-            showResponse(responseId, `<div class="timer">${RATE_LIMIT_DURATION}s</div><strong>Quá nhiều yêu cầu!</strong><br>Bạn đã vượt quá giới hạn cho phép.<br>Giới hạn: <strong>5 yêu cầu/phút</strong><br>Vui lòng đợi <strong>${RATE_LIMIT_DURATION} giây</strong> trước khi thử lại.`, "error");
+          } else if (response.ok) {
+            showResponse("loginResponse", "Đăng nhập thành công!", "success");
+          } else {
+            stats.login.failed++;
+            updateStats("login");
+            showResponse(
+              "loginResponse",
+              `${data.message || "Email hoặc mật khẩu không chính xác. Vui lòng kiểm tra lại."}`,
+              "error",
+            );
+          }
+        } catch (error) {
+          stats.login.failed++;
+          updateStats("login");
+          showResponse(
+            "loginResponse",
+            `Không thể kết nối đến máy chủ. Vui lòng kiểm tra kết nối mạng.`,
+            "error",
+          );
+        }
+      }
+
+      async function testLoginBruteforce() {
+        showResponse(
+          "loginResponse",
+          "Bắt đầu test bruteforce login (6 requests)...",
+          "info",
+        );
+        for (let i = 1; i <= 6; i++) {
+          await testLogin();
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }
+
+      async function testSendOtp() {
+        const email = document.getElementById("otpEmail").value;
+
+        if (!email) {
+          showResponse(
+            "otpResponse",
+            "Vui lòng nhập địa chỉ email.",
+            "warning",
+          );
+          return;
         }
 
-        function resetLoginCounter() { stats.login.count = 0; updateCounter('login', 0); }
-        function resetOtpCounter() { stats.otp.count = 0; updateCounter('otp', 0); }
-        function resetResetCounter() { stats.reset.count = 0; updateCounter('reset', 0); }
+        stats.otp.count++;
+        updateCounter("otp", stats.otp.count);
+        try {
+          const response = await fetch(`${API_BASE}/send-otp`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email }),
+          });
+          const data = await response.json();
+          if (response.status === 429) {
+            // Phân biệt Anti-Brute Force vs Rate Limiting
+            const message = data.message || data.error || "";
+            if (
+              message.includes("khóa") ||
+              message.includes("locked") ||
+              message.includes("Retry-After") ||
+              message.includes("bi khoa") ||
+              message.includes("khoa do")
+            ) {
+              // Anti-Brute Force: Chức năng bị khóa
+              stats.otp.locked++;
+              stats.otp.isLocked = true;
+              updateStats("otp");
+              handleAccountLock("sendOtpBtn", "otpResponse", "otp", message);
+            } else {
+              // Rate Limiting: Gửi quá nhiều yêu cầu
+              handleRateLimit("sendOtpBtn", "otpResponse", "otp");
+            }
+          } else if (response.ok) {
+            stats.otp.sent++;
+            updateStats("otp");
+            showResponse(
+              "otpResponse",
+              `${data.message || "Mã OTP đã được gửi đến email của bạn. Vui lòng kiểm tra hộp thư đến."}`,
+              "success",
+            );
+            document.getElementById("verifyOtpSection").style.display = "block";
+          } else {
+            showResponse(
+              "otpResponse",
+              `${data.message || "Không thể gửi mã OTP. Vui lòng thử lại sau."}`,
+              "error",
+            );
+          }
+        } catch (error) {
+          showResponse(
+            "otpResponse",
+            `Không thể kết nối đến máy chủ. Vui lòng kiểm tra kết nối mạng.`,
+            "error",
+          );
+        }
+      }
 
-        async function testLogin() {
-            const email = document.getElementById('loginEmail').value;
-            const password = document.getElementById('loginPassword').value;
-            
-            if (!email || !password) {
-                showResponse('loginResponse', 'Vui lòng nhập email và mật khẩu.', 'warning');
-                return;
-            }
-            
-            stats.login.count++;
-            updateCounter('login', stats.login.count);
-            try {
-                const response = await fetch(`${API_BASE}/login`, { 
-                    method: 'POST', 
-                    headers: { 'Content-Type': 'application/json' }, 
-                    credentials: 'include', 
-                    body: JSON.stringify({ email, password }) 
-                });
-                const data = await response.json();
-                if (response.status === 429) {
-                    handleRateLimit('loginBtn', 'loginResponse', 'login');
-                } else {
-                    stats.login.failed++;
-                    updateStats('login');
-                    showResponse('loginResponse', `Đăng nhập thất bại. ${data.message || 'Email hoặc mật khẩu không đúng.'}`, 'error');
-                }
-            } catch (error) {
-                stats.login.failed++;
-                updateStats('login');
-                showResponse('loginResponse', `Kết nối thất bại. Vui lòng thử lại.`, 'error');
-            }
+      async function testSendOtpBruteforce() {
+        showResponse(
+          "otpResponse",
+          "Bắt đầu test Send OTP bruteforce (6 requests)...",
+          "info",
+        );
+        for (let i = 1; i <= 6; i++) {
+          await testSendOtp();
+          await new Promise((resolve) => setTimeout(resolve, 100));
         }
+      }
+      async function testVerifyOtp() {
+        const email = document.getElementById("otpEmail").value;
+        const otp = document.getElementById("otpCode").value || "000000";
 
-        async function testLoginBruteforce() {
-            showResponse('loginResponse', 'Bắt đầu test bruteforce login (6 requests)...', 'info');
-            for (let i = 1; i <= 6; i++) {
-                await testLogin();
-                await new Promise(resolve => setTimeout(resolve, 100));
+        stats.otp.count++;
+        updateCounter("otp", stats.otp.count);
+        try {
+          const response = await fetch(`${API_BASE}/verify-otp`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email, otp }),
+          });
+          const data = await response.json();
+          if (response.status === 429) {
+            // Phân biệt Anti-Brute Force vs Rate Limiting
+            const message = data.message || data.error || "";
+            if (
+              message.includes("khóa") ||
+              message.includes("locked") ||
+              message.includes("Retry-After") ||
+              message.includes("bi khoa") ||
+              message.includes("khoa do")
+            ) {
+              // Anti-Brute Force: Chức năng bị khóa
+              stats.otp.locked++;
+              stats.otp.isLocked = true;
+              updateStats("otp");
+              handleAccountLock("verifyOtpBtn", "otpResponse", "otp", message);
+            } else {
+              // Rate Limiting
+              handleRateLimit("verifyOtpBtn", "otpResponse", "otp");
             }
+          } else if (response.ok) {
+            stats.otp.sent++;
+            updateStats("otp");
+            showResponse(
+              "otpResponse",
+              `${data.message || "Xác thực OTP thành công!"}`,
+              "success",
+            );
+          } else {
+            stats.otp.failed++;
+            updateStats("otp");
+            showResponse(
+              "otpResponse",
+              `${data.message || "Mã OTP không chính xác. Vui lòng kiểm tra lại."}`,
+              "error",
+            );
+          }
+        } catch (error) {
+          stats.otp.failed++;
+          updateStats("otp");
+          showResponse(
+            "otpResponse",
+            "Không thể kết nối đến máy chủ. Vui lòng kiểm tra kết nối mạng.",
+            "error",
+          );
         }
+      }
 
-        async function testSendOtp() {
-            const email = document.getElementById('otpEmail').value;
-            
-            if (!email) {
-                showResponse('otpResponse', 'Vui lòng nhập địa chỉ email.', 'warning');
-                return;
-            }
-            
-            stats.otp.count++;
-            updateCounter('otp', stats.otp.count);
-            try {
-                const response = await fetch(`${API_BASE}/send-otp`, { 
-                    method: 'POST', 
-                    headers: { 'Content-Type': 'application/json' }, 
-                    body: JSON.stringify({ email }) 
-                });
-                const data = await response.json();
-                if (response.status === 429) {
-                    handleRateLimit('sendOtpBtn', 'otpResponse', 'otp', 'send');
-                } else if (response.ok) {
-                    stats.otp.sent++;
-                    updateStats('otp');
-                    showResponse('otpResponse', `${data.message || 'Mã OTP đã được gửi đến email của bạn.'}`, 'success');
-                    document.getElementById('verifyOtpSection').style.display = 'block';
-                } else {
-                    showResponse('otpResponse', `Gửi mã OTP thất bại. ${data.message || 'Vui lòng thử lại.'}`, 'error');
-                }
-            } catch (error) {
-                showResponse('otpResponse', `Kết nối thất bại. Vui lòng kiểm tra kết nối mạng.`, 'error');
-            }
+      async function testVerifyOtpBruteforce() {
+        showResponse(
+          "otpResponse",
+          "Bắt đầu test Verify OTP bruteforce (6 requests)...",
+          "info",
+        );
+        for (let i = 1; i <= 6; i++) {
+          await testVerifyOtp();
+          await new Promise((resolve) => setTimeout(resolve, 100));
         }
+      }
 
-        async function testSendOtpBruteforce() {
-            showResponse('otpResponse', 'Bắt đầu test Send OTP bruteforce (6 requests)...', 'info');
-            for (let i = 1; i <= 6; i++) {
-                await testSendOtp();
-                await new Promise(resolve => setTimeout(resolve, 100));
-            }
-        }
-        async function testVerifyOtp() {
-            const email = document.getElementById('otpEmail').value;
-            const otp = document.getElementById('otpCode').value;
-            
-            if (!email || !otp) {
-                showResponse('otpResponse', 'Vui lòng nhập email và mã OTP.', 'warning');
-                return;
-            }
-            
-            stats.otp.count++;
-            updateCounter('otp', stats.otp.count);
-            try {
-                const response = await fetch(`${API_BASE}/verify-otp`, { 
-                    method: 'POST', 
-                    headers: { 'Content-Type': 'application/json' }, 
-                    body: JSON.stringify({ email, otp }) 
-                });
-                const data = await response.json();
-                if (response.status === 429) {
-                    handleRateLimit('verifyOtpBtn', 'otpResponse', 'otp', 'verify');
-                } else if (response.ok) {
-                    showResponse('otpResponse', 'Xác thực thành công!', 'success');
-                } else {
-                    stats.otp.failed++;
-                    updateStats('otp');
-                    showResponse('otpResponse', `(${response.status}) ${data.message || 'Invalid OTP'}<br>Request #${stats.otp.count}`, 'error');
-                }
-            } catch (error) {
-                stats.otp.failed++;
-                updateStats('otp');
-                showResponse('loginResponse', `Kết nối thất bại. Vui lòng thử lại.`, 'error');
-            }
-        }
-        async function testVerifyOtp() {
-            const email = document.getElementById('otpEmail').value;
-            const otp = document.getElementById('otpCode').value || '000000';
-            stats.otp.count++;
-            updateCounter('otp', stats.otp.count);
-            try {
-                const response = await fetch(`${API_BASE}/verify-otp`, { 
-                    method: 'POST', 
-                    headers: { 'Content-Type': 'application/json' }, 
-                    body: JSON.stringify({ email, otp }) 
-                });
-                const data = await response.json();
-                if (response.status === 429) {
-                    handleRateLimit('verifyOtpBtn', 'otpResponse', 'otp', 'verify');
-                } else if (response.ok) {
-                    stats.otp.sent++;
-                    updateStats('otp');
-                    showResponse('otpResponse', `${data.message || 'Xác thực OTP thành công.'}`, 'success');
-                } else {
-                    stats.otp.failed++;
-                    updateStats('otp');
-                    showResponse('otpResponse', `${data.message || 'Mã OTP không hợp lệ.'}`, 'error');
-                }
-            } catch (error) {
-                stats.otp.failed++;
-                updateStats('otp');
-                showResponse('otpResponse', 'Kết nối thất bại. Vui lòng thử lại.', 'error');
-            }
-        }
+      async function testForgotPassword() {
+        const email = document.getElementById("forgotEmail").value;
 
-        async function testVerifyOtpBruteforce() {
-            showResponse('otpResponse', 'Bắt đầu test Verify OTP bruteforce (6 requests)...', 'info');
-            for (let i = 1; i <= 6; i++) {
-                await testVerifyOtp();
-                await new Promise(resolve => setTimeout(resolve, 100));
-            }
+        if (!email) {
+          showResponse(
+            "resetResponse",
+            "Vui lòng nhập địa chỉ email.",
+            "warning",
+          );
+          return;
         }
 
-        async function testForgotPassword() {
-            const email = document.getElementById('forgotEmail').value;
-            
-            if (!email) {
-                showResponse('resetResponse', 'Vui lòng nhập địa chỉ email.', 'warning');
-                return;
+        stats.reset.count++;
+        updateCounter("reset", stats.reset.count);
+        try {
+          const response = await fetch(`${API_BASE}/forgot-password`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email }),
+          });
+          const data = await response.json();
+          if (response.status === 429) {
+            // Phân biệt Anti-Brute Force vs Rate Limiting
+            const message = data.message || data.error || "";
+            if (
+              message.includes("khóa") ||
+              message.includes("locked") ||
+              message.includes("Retry-After") ||
+              message.includes("bi khoa") ||
+              message.includes("khoa do")
+            ) {
+              // Anti-Brute Force: Chức năng bị khóa
+              if (!stats.reset.isLocked) {
+                stats.reset.locked++;
+                stats.reset.isLocked = true;
+              }
+              updateStats("reset");
+              handleAccountLock("forgotBtn", "resetResponse", "reset", message);
+            } else {
+              // Rate Limiting
+              handleRateLimit("forgotBtn", "resetResponse", "reset");
             }
-            
-            stats.reset.count++;
-            updateCounter('reset', stats.reset.count);
-            try {
-                const response = await fetch(`${API_BASE}/forgot-password`, { 
-                    method: 'POST', 
-                    headers: { 'Content-Type': 'application/json' }, 
-                    body: JSON.stringify({ email }) 
-                });
-                const data = await response.json();
-                if (response.status === 429) {
-                    handleRateLimit('forgotBtn', 'resetResponse', 'reset');
-                } else if (response.ok) {
-                    stats.reset.sent++;
-                    updateStats('reset');
-                    showResponse('resetResponse', `${data.message || 'Liên kết đặt lại mật khẩu đã được gửi đến email của bạn.'}`, 'success');
-                } else {
-                    showResponse('resetResponse', `Gửi liên kết thất bại. ${data.message || 'Vui lòng thử lại.'}`, 'error');
-                }
-            } catch (error) {
-                showResponse('resetResponse', 'Kết nối thất bại. Vui lòng thử lại.', 'error');
+          } else if (response.status === 423) {
+            // Account Locked - Anti-Bruteforce
+            // Chỉ count lần đầu tiên bị lock
+            if (!stats.reset.isLocked) {
+              stats.reset.locked++;
+              stats.reset.isLocked = true;
+              updateStats("reset");
             }
+            const lockMessage =
+              data.message ||
+              "Bạn đã nhập sai email quá nhiều lần. Vui lòng thử lại sau 10 phút.";
+            handleAccountLock(
+              "forgotBtn",
+              "resetResponse",
+              "reset",
+              lockMessage,
+            );
+          } else if (response.ok) {
+            stats.reset.sent++;
+            updateStats("reset");
+            showResponse(
+              "resetResponse",
+              `${data.message || "Liên kết đặt lại mật khẩu đã được gửi đến email của bạn. Vui lòng kiểm tra hộp thư."}`,
+              "success",
+            );
+          } else {
+            stats.reset.failed++;
+            updateStats("reset");
+            showResponse(
+              "resetResponse",
+              `${data.message || "Email không tồn tại trong hệ thống. Vui lòng kiểm tra lại."}`,
+              "error",
+            );
+          }
+        } catch (error) {
+          showResponse(
+            "resetResponse",
+            "Không thể kết nối đến máy chủ. Vui lòng kiểm tra kết nối mạng.",
+            "error",
+          );
         }
+      }
 
-        async function testForgotBruteforce() {
-            showResponse('resetResponse', 'Bắt đầu test Forgot Password bruteforce (6 requests)...', 'info');
-            for (let i = 1; i <= 6; i++) {
-                await testForgotPassword();
-                await new Promise(resolve => setTimeout(resolve, 100));
-            }
+      async function testForgotBruteforce() {
+        showResponse(
+          "resetResponse",
+          "Bắt đầu test Forgot Password bruteforce (6 requests)...",
+          "info",
+        );
+        for (let i = 1; i <= 6; i++) {
+          await testForgotPassword();
+          await new Promise((resolve) => setTimeout(resolve, 100));
         }
+      }
     </script>
-</body>
+  </body>
 </html>
